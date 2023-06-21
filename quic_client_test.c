@@ -19,7 +19,7 @@
 #include <netdb.h>
 
 
-static const char msg1[] = "GET LICENSE.txt\r\n";
+static const char msg1[] = "GET / HTTP/1.1\r\nHost: quic.rocks\r\n\r\n";
 static char msg2[16000];
 
 static void TEST_info(char *fmt, ...)                                                       
@@ -83,7 +83,8 @@ static int test_quic_client(char *hostname, short port)
         goto err;
     }
 
-    c_net_bio = c_net_bio_own = BIO_new_dgram(c_fd, 0);
+    c_net_bio_own = BIO_new_dgram(c_fd, 0);
+    c_net_bio = c_net_bio_own;
     if (c_net_bio == NULL)
         goto err;
 
@@ -98,7 +99,7 @@ static int test_quic_client(char *hostname, short port)
     if (c_ssl == NULL)
         goto err;
 
-    SSL_set_tlsext_host_name(c_ssl, hostname); /* JFC add */
+    /* SSL_set_tlsext_host_name(c_ssl, hostname); /0 JFC add */
 
     /* SSL_CTX_set_session_id_context missing ? */
     /*
@@ -128,14 +129,14 @@ static int test_quic_client(char *hostname, short port)
     start_time = apr_time_now();
 
     for (;;) {
-        if (apr_time_now() - start_time >= 30000) {
+        if (apr_time_now() - start_time >= 60000000) {
             TEST_error("timeout while attempting QUIC client test\n");
             goto err;
         }
 
         if (!c_connected) {
             ret = SSL_connect(c_ssl);
-            printf("SSL_connect returns %d %d\n", ret, is_want(c_ssl, ret));
+            /* printf("SSL_connect returns %d %d\n", ret, is_want(c_ssl, ret)); */
             if (!(ret == 1 || is_want(c_ssl, ret))) {
                 TEST_error("SSL_connect failed!\n");
                 goto err;
@@ -144,18 +145,25 @@ static int test_quic_client(char *hostname, short port)
             if (ret == 1) {
                 c_connected = 1;
                 TEST_info("Connected!");
+                printf("Connected!\n");
             }
         }
 
         if (c_connected && !c_write_done) {
+            printf("sending request...\n");
+            OSSL_sleep(10000);
             if (SSL_write(c_ssl, msg1, sizeof(msg1) - 1) !=
-                             (int)sizeof(msg1) - 1)
+                             (int)sizeof(msg1) - 1) {
                 goto err;
-
-            if (!(SSL_stream_conclude(c_ssl, 0)))
+            }
+            /* calls ossl_quic_conn_stream_conclude(c_ssl) */
+            if (!(SSL_stream_conclude(c_ssl, 0))) {
+                printf("SSL_stream_conclude failed!!!");
                 goto err;
+             }
 
             c_write_done = 1;
+            printf("SSL_get_stream_id: %d type: %d\n", SSL_get_stream_id(c_ssl), SSL_get_stream_type(c_ssl));
         }
 
         if (c_write_done && !c_shutdown && c_total_read < sizeof(msg2) - 1) {
@@ -169,6 +177,7 @@ static int test_quic_client(char *hostname, short port)
                     goto err;
                 }
             } else {
+                printf("reading something %d\n", l); 
                 c_total_read += l;
 
                 if (c_total_read != sizeof(msg2) - 1)
@@ -187,7 +196,7 @@ static int test_quic_client(char *hostname, short port)
          * blocking but this is just a test.
          */
         OSSL_sleep(0);
-        SSL_tick(c_ssl);
+        SSL_handle_events(c_ssl);
     }
 
     testresult = 1;
