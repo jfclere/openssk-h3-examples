@@ -28,6 +28,10 @@
 static const char msg1[] = "GET / HTTP/3\r\nHost: quic.rocks:4433\r\n\r\n";
 static char msg2[16000];
 
+/* CURL according to trace has 2 more streams 7 and 11 */
+SSL *r1_ssl = NULL;
+SSL *r2_ssl = NULL;
+
 static void TEST_info(char *fmt, ...)                                                       
 {                                                                               
    va_list arg_ptr;                                                             
@@ -47,21 +51,54 @@ static int is_want(SSL *s, int ret)
 
 static int JFC_SSL_read_ex(SSL *M_ssl)
 {
-            size_t l;
+            size_t l = sizeof(msg2) - 1;
+            if (SSL_get_accept_stream_queue_len(M_ssl)) {
+                printf("SSL_get_accept_stream_queue_len %d\n", SSL_get_accept_stream_queue_len(M_ssl));
+                SSL *new_ssl = SSL_accept_stream(M_ssl, 0);
+                printf("new_ssl: %d", SSL_get_stream_id(new_ssl));
+                if (!r1_ssl)
+                    r1_ssl = new_ssl;
+                else if (!r2_ssl)
+                    r2_ssl = new_ssl;
+                else {
+                    printf("Oops too many streams to accept!!!\n");
+                    exit(1);
+                }
+            }
+
             int ret = SSL_read_ex(M_ssl, msg2,
                               sizeof(msg2) - 1, &l);
+            printf("SSL_read_ex on %d return %d\n", SSL_get_stream_id(M_ssl), ret);
             if (ret <= 0) {
                 if (SSL_get_error(M_ssl, ret) == SSL_ERROR_ZERO_RETURN) {
                     printf("\n SSL_read_ex FAILED! c_shutdown\n");
                     return -1;
                 } else if (!(is_want(M_ssl, ret))) {
-                    printf("\n SSL_read_ex FAILED %d stream: %d!\n", SSL_get_error(M_ssl, ret), SSL_get_stream_id(M_ssl));
-                    return -1;
+                    // printf("\n SSL_read_ex FAILED %d stream: %d!\n", SSL_get_error(M_ssl, ret), SSL_get_stream_id(M_ssl));
+                    return 0;
                 }
             } else {
-                printf("reading something %d\n", l);
-                return -1;
+                printf("\nreading something %d\n", l);
+                return l;
             }
+            if (ret == 0 && SSL_get_error(M_ssl, ret)==SSL_ERROR_WANT_READ) {
+                printf("Need to read again... on %d\n", SSL_get_stream_id(M_ssl));
+                // SSL_set_blocking_mode(M_ssl, 1);
+                printf("Need to read again... on %d BLOCKING!!!\n", SSL_get_stream_id(M_ssl));
+                // SSL_read_ex(M_ssl, msg2, sizeof(msg2) - 1, &l);
+                SSL *new_ssl = SSL_accept_stream(M_ssl, 0);
+                if (new_ssl)
+                    exit(1);
+                else
+                    printf("new_ssl: %d\n", new_ssl);
+                printf("SSL_get_accept_stream_queue_len %d\n", SSL_get_accept_stream_queue_len(M_ssl));
+                // SSL_set_blocking_mode(M_ssl, 0);
+                if (l == 0) {
+                //     SSL_shutdown(M_ssl);
+                    return 0;
+                }
+            }
+            printf("reading something %d\n", l);
             return 0;
 }
 
@@ -81,6 +118,10 @@ static int cb_h3_stream_close(nghttp3_conn *conn, int64_t stream_id,
 static int begin_headers(nghttp3_conn *conn, int64_t stream_id, void *user_data,
                          void *stream_user_data) {
     printf("begin_headers!\n");
+    return 0;
+}
+static int cb_h3_begin_headers(nghttp3_conn *conn, int64_t stream_id, void *conn_user_data, void *stream_user_data) {
+    printf("cb_h3_begin_headers!\n");
     return 0;
 }
 static int cb_h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
@@ -121,6 +162,14 @@ static int cb_h3_reset_stream(nghttp3_conn *conn, int64_t stream_id,
     printf("cb_h3_reset_stream!\n");
     return 0;
 }
+static int cb_h3_shutdown(nghttp3_conn *conn, int64_t id, void *conn_user_data) {
+    printf("cb_h3_shutdown!\n");
+    return 0;
+}
+static int cb_h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings, void *conn_user_data) {
+    printf("cb_h3_recv_settings!\n");
+    return 0;
+}
 
 
 static nghttp3_callbacks ngh3_callbacks = {
@@ -128,7 +177,7 @@ static nghttp3_callbacks ngh3_callbacks = {
   cb_h3_stream_close,
   cb_h3_recv_data,
   cb_h3_deferred_consume,
-  NULL, /* begin_headers */
+  cb_h3_begin_headers, /* begin_headers */
   cb_h3_recv_header,
   cb_h3_end_headers,
   NULL, /* begin_trailers */
@@ -137,8 +186,8 @@ static nghttp3_callbacks ngh3_callbacks = {
   cb_h3_stop_sending,
   NULL, /* end_stream */
   cb_h3_reset_stream,
-  NULL, /* shutdown */
-  NULL /* recv_settings */
+  cb_h3_shutdown, /* shutdown */
+  cb_h3_recv_settings /* recv_settings */
 };
 
 static int jfc_send_stream(SSL *c_ssl, int ret, nghttp3_vec *vec)
@@ -147,7 +196,9 @@ static int jfc_send_stream(SSL *c_ssl, int ret, nghttp3_vec *vec)
     int written = 0;
     for (i=0; i<ret; i++) {
        printf("jfc_send_stream writting %d on %d\n", vec[i].len, SSL_get_stream_id(c_ssl));
-       SSL_write(c_ssl, vec[i].base, vec[i].len);
+       int rv = SSL_write(c_ssl, vec[i].base, vec[i].len);
+       if (rv<=0)
+           printf("SSL_write failed! %d\n", SSL_get_error(c_ssl, rv));
        written = written + vec[i].len;
     }
     return written;
@@ -301,6 +352,9 @@ static int test_quic_client(char *hostname, short port)
     SSL *r_ssl = NULL;
     SSL *d_ssl = NULL;
 
+    // SSL_set_default_stream_mode(c_ssl, SSL_DEFAULT_STREAM_MODE_NONE);
+    SSL_set_incoming_stream_policy(c_ssl, SSL_INCOMING_STREAM_POLICY_ACCEPT, 0);
+
     for (;;) {
         if (apr_time_now() - start_time >= 60000000) {
             TEST_error("timeout while attempting QUIC client test\n");
@@ -418,7 +472,7 @@ try_again:
         }
 
         if (c_write_done && !c_shutdown && c_total_read < sizeof(msg2) - 1) {
-            /* ret = JFC_SSL_read_ex(c_ssl);
+            ret = JFC_SSL_read_ex(c_ssl);
             if (ret < 0) {
                 printf("\n SSL_read_ex(c_ssl) FAILED!!!");
                 goto err;
@@ -438,11 +492,28 @@ try_again:
                 printf("\n SSL_read_ex(r_ssl) FAILED!!!");
                 goto err;
             }
-            */
             ret = JFC_SSL_read_ex(d_ssl);
             if (ret < 0) {
                 printf("\n SSL_read_ex(d_ssl) FAILED!!!");
                 goto err;
+            }
+            if (r1_ssl) {
+                ret = JFC_SSL_read_ex(r1_ssl);
+                if (ret < 0) {
+                    printf("\n SSL_read_ex(r1_ssl) FAILED!!!");
+                    goto err;
+                }
+                if (ret > 0) {
+                    int i = nghttp3_conn_read_stream(conn, SSL_get_stream_id(r1_ssl), msg2, ret, 0);
+                    printf("nghttp3_conn_read_stream used %d of %d\n", i, ret);
+                }
+            }
+            if (r2_ssl) {
+                ret = JFC_SSL_read_ex(r2_ssl);
+                if (ret < 0) {
+                    printf("\n SSL_read_ex(r2_ssl) FAILED!!!");
+                    goto err;
+                }
             }
         }
 
