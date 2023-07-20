@@ -32,6 +32,7 @@ static char msg2[16000];
 SSL *r1_ssl = NULL;
 SSL *r2_ssl = NULL;
 SSL *r3_ssl = NULL;
+SSL *r4_ssl = NULL;
 
 static void TEST_info(char *fmt, ...)                                                       
 {                                                                               
@@ -63,6 +64,8 @@ static int JFC_SSL_read_ex(SSL *M_ssl)
                     r2_ssl = new_ssl;
                 else if (!r3_ssl)
                     r3_ssl = new_ssl;
+                else if (!r4_ssl)
+                    r4_ssl = new_ssl;
                 else {
                     printf("Oops too many streams to accept!!!\n");
                     exit(1);
@@ -131,6 +134,14 @@ static int cb_h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t toke
                        nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags,
                        void *user_data, void *stream_user_data) {
     printf("cb_h3_recv_header!\n");
+    nghttp3_vec h3name = nghttp3_rcbuf_get_buf(name);
+    nghttp3_vec h3val = nghttp3_rcbuf_get_buf(value);
+
+    if (token == NGHTTP3_QPACK_TOKEN__STATUS) {
+        printf("Status %.*s\n", h3val.len, h3val.base);
+    } else {
+        printf("header %.*s: %.*s\n",  (int)h3name.len, h3name.base, (int)h3val.len, h3val.base);
+    }    
     return 0;
 }
 static int cb_h3_end_headers(nghttp3_conn *conn, int64_t stream_id, int fin,
@@ -238,9 +249,11 @@ static int test_quic_client(char *hostname, short port)
     const nghttp3_mem *mem = nghttp3_mem_default();
     const nghttp3_nv nva[] = {
       MAKE_NV(":path", "/"),
-      MAKE_NV(":authority", "quic.rocks:4433"),
+      MAKE_NV(":authority", "quic.tech:4433"),
       MAKE_NV(":scheme", "https"),
       MAKE_NV(":method", "GET"),
+      MAKE_NV("user-agent", "curl/8.2.0-DEV"),
+      MAKE_NV("accept", "*/*"),
     };
 
     nghttp3_settings_default(&settings);
@@ -250,7 +263,7 @@ static int test_quic_client(char *hostname, short port)
         exit(1);
     }
 /*
-    if (nghttp3_conn_submit_request(conn, 0, nva, 4, NULL, NULL)) {
+    if (nghttp3_conn_submit_request(conn, 0, nva, 6, NULL, NULL)) {
         printf("nghttp3_conn_bind_qpack_streams failed!\n");
         exit(1);
     }
@@ -411,7 +424,7 @@ static int test_quic_client(char *hostname, short port)
 
             d_ssl = SSL_new_stream(c_ssl, 0);
             printf("SSL_get_stream_id: %d type: %d\n", SSL_get_stream_id(d_ssl), SSL_get_stream_type(d_ssl));
-            if (nghttp3_conn_submit_request(conn, SSL_get_stream_id(d_ssl), nva, 4, NULL, NULL)) {
+            if (nghttp3_conn_submit_request(conn, SSL_get_stream_id(d_ssl), nva, 6, NULL, NULL)) {
                 printf("nghttp3_conn_bind_qpack_streams failed!\n");
                 exit(1);
             }
@@ -422,9 +435,14 @@ try_again:
             if (ret<0) {
                 printf("nghttp3_conn_writev_stream failed %d!\n", ret);
                 exit(1);
+            } else if (ret == 0 && stream_id == -1) {
+                printf("Done with nghttp3_conn_writev_stream\n");
+            } else if (ret == 0 && stream_id != -1) {
+                printf("Done with nghttp3_conn_writev_stream on %d fin: %d\n", stream_id, fin);
+                nghttp3_conn_add_write_offset(conn, stream_id, 0);
             } else {
                 /* We have to write the vec stuff */
-                printf("sending %d on %d (%d)\n", ret, stream_id, fin);
+                printf("sending %d on %d (fin: %d)\n", ret, stream_id, fin);
                 SSL *MY_ssl = NULL;
                 if (SSL_get_stream_id(n_ssl) == stream_id)
                     MY_ssl = n_ssl;
@@ -436,13 +454,23 @@ try_again:
                     MY_ssl = r_ssl;
                 if (SSL_get_stream_id(d_ssl) == stream_id)
                     MY_ssl = d_ssl;
+                if (!MY_ssl) {
+                     printf("stream_id: %d unknown\n", stream_id);
+                     exit(1);
+                }
                 
                 int i = jfc_send_stream(MY_ssl, ret, vec);
                 
                 if (i != 0) {
                     nghttp3_conn_add_write_offset(conn, stream_id, i);
-                    printf("MERDE sending %d on %d (%d)\n", ret, stream_id, fin);
+                    printf("sending %d on %d (fin: %d)\n", ret, stream_id, fin);
+                    if (fin) {
+                        printf("FIN on %d\n", stream_id);
+                        SSL_stream_conclude(MY_ssl, 0);
+                    }
                     goto try_again;
+                } else {
+                    printf("sending NOTHING %d on %d (fin: %d)\n", ret, stream_id, fin);
                 }
             }
             
@@ -541,6 +569,17 @@ try_again:
                 }
                 if (ret > 0) {
                     int i = nghttp3_conn_read_stream(conn, SSL_get_stream_id(r3_ssl), msg2, ret, 0);
+                    printf("nghttp3_conn_read_stream used %d of %d\n", i, ret);
+                }
+            }
+            if (r4_ssl) {
+                ret = JFC_SSL_read_ex(r4_ssl);
+                if (ret < 0) {
+                    printf("\n SSL_read_ex(r4_ssl) FAILED!!!");
+                    goto err;
+                }
+                if (ret > 0) {
+                    int i = nghttp3_conn_read_stream(conn, SSL_get_stream_id(r4_ssl), msg2, ret, 0);
                     printf("nghttp3_conn_read_stream used %d of %d\n", i, ret);
                 }
             }
