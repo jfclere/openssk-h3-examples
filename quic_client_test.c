@@ -73,6 +73,7 @@ static void accept_new_ssl_ids(SSL *s,  BIO *bio) {
   if (num > 0) {
     for (int i=0; i<num; i++) {
       SSL *new_ssl = SSL_accept_stream(s, 0);
+      printf("accept_new_ssl_ids accepted: SSL_get_stream_id: %d %d\n", SSL_get_stream_id(new_ssl), SSL_get_stream_type(new_ssl));
       add_id(new_ssl);
       SSL_set_msg_callback(new_ssl, SSL_trace);
       SSL_set_msg_callback_arg(new_ssl, bio);
@@ -412,7 +413,8 @@ static int test_quic_client(char *hostname, short port)
     start_time = apr_time_now();
 
     // SSL_set_default_stream_mode(c_ssl, SSL_DEFAULT_STREAM_MODE_NONE);
-    SSL_set_incoming_stream_policy(c_ssl, SSL_INCOMING_STREAM_POLICY_ACCEPT, 0);
+    // SSL_set_default_stream_mode(c_ssl, SSL_DEFAULT_STREAM_MODE_AUTO_BIDI);
+    // SSL_set_incoming_stream_policy(c_ssl, SSL_INCOMING_STREAM_POLICY_AUTO, 0);
 
     // Try traces
     BIO *bio = BIO_new_file("trace.txt", "w");
@@ -424,6 +426,11 @@ static int test_quic_client(char *hostname, short port)
             TEST_error("timeout while attempting QUIC client test\n");
             goto err;
         }
+        /* Check for new QUIC streams and accept them */
+        if (c_ssl) {
+            accept_new_ssl_ids(c_ssl, bio);
+        }
+
 
         if (!c_connected) {
             ret = SSL_connect(c_ssl);
@@ -487,11 +494,6 @@ static int test_quic_client(char *hostname, short port)
                 exit(1);
             }
 
-        }
-
-        /* Check for new QUIC streams and accept them */
-        if (c_connected) {
-            accept_new_ssl_ids(c_ssl, bio);
         }
 
         if (c_write_done && !c_shutdown) {
