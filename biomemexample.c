@@ -48,7 +48,50 @@ int client(int fdread, int fdwrite)
                   error =  SSL_get_error(ssl_client, ret);
                   printf("client: SSL_do_handshake %d\n", error);
 		  fflush(stdout);
+                  /* trying something ... */
+                  if (error == SSL_ERROR_NONE) {
+                    printf("client: SSL_do_handshake DONE???\n");
+		    fflush(stdout);
+		    int ret = BIO_read(client_w, buf, 4096);
+                    if (ret>0) {
+                      write(fdwrite, buf, ret);
+                      printf("client: SSL_do_handshake DONE %d %d\n", ret, SSL_get_error(ssl_client, ret));
+		      fflush(stdout);
+                    }
+                  }
                 }
+		fflush(stdout);
+                if (error == SSL_ERROR_WANT_READ) {
+                  printf("client: SSL_ERROR_WANT_READ\n");
+		  fflush(stdout);
+		  int ret = BIO_read(client_w, buf, 4096);
+                  if (ret>0) {
+                    write(fdwrite, buf, ret);
+                    printf("client SSL_ERROR_WANT_READ read %d\n", ret);
+                    fflush(stdout);
+                    continue;
+                  }  else  {
+                    error =  SSL_get_error(ssl_client, ret);
+                    printf("client SSL_ERROR_WANT_READ error %d\n", error);
+                    fflush(stdout);
+                  }
+                }
+                if (error == SSL_ERROR_WANT_WRITE) {
+                  printf("client SSL_ERROR_WANT_WRITE\n");
+		  fflush(stdout);
+                  n = read(fdread, buf, 4096);
+                  if (n<=0) {
+                    printf("read failed %d", errno);
+                    break;
+                  }
+	          int ret = BIO_write(client_r, buf, n);
+                  error =  SSL_get_error(ssl_client, ret);
+                  printf("client SSL_ERROR_WANT_WRITE written %d\n", ret);
+		  fflush(stdout);
+                  continue;
+                
+                }
+                printf("client: OOPS! %d\n", error);
                 fd_set fdset;
                 struct timeval tv;
                 FD_ZERO(&fdset);
@@ -64,42 +107,9 @@ int client(int fdread, int fdwrite)
                   error = SSL_get_error(ssl_client, ret);
                   printf("client  received %d return %d\n", n, ret);
                 }
-		fflush(stdout);
-                if (error == SSL_ERROR_WANT_READ) {
-                  printf("client: SSL_ERROR_WANT_READ\n");
-		  fflush(stdout);
-		  int ret = BIO_read(client_w, buf, 4096);
-                  if (ret>0) {
-                    write(fdwrite, buf, ret);
-                    printf("client SSL_ERROR_WANT_READ writen %d\n", ret);
-                    fflush(stdout);
-                  }  else  {
-                    error =  SSL_get_error(ssl_client, ret);
-                    printf("client SSL_ERROR_WANT_READ error %d\n", error);
-                    fflush(stdout);
-                  }
-                  continue;
-                }
-                if (error == SSL_ERROR_WANT_WRITE) {
-                  printf("client SSL_ERROR_WANT_WRITE\n");
-		  fflush(stdout);
-                  n = read(fdread, buf, 4096);
-                  if (n<=0) {
-                    printf("read failed %d", errno);
-                    break;
-                  }
-	          int ret = BIO_write(client_r, buf, n);
-                  error =  SSL_get_error(ssl_client, ret);
-                  printf("client SSL_ERROR_WANT_WRITE writen %d\n", ret);
-		  fflush(stdout);
-                  continue;
-                
-                }
-                printf("client: OOPS! %d\n", error);
                 fin_client = SSL_is_init_finished(ssl_client);
         }
         printf("client done! %d\n", SSL_is_init_finished(ssl_client));
-        sleep(5);
 }
 int server(int fdread, int fdwrite)
 {
@@ -128,13 +138,64 @@ int server(int fdread, int fdwrite)
 	while(!fin_srv)
 	{
                 if (!SSL_is_init_finished(ssl_srv)) {
-                  printf("server  SSL_do_handshake\n");
+                  printf("server SSL_do_handshake\n");
 		  fflush(stdout);
 		  int ret = SSL_do_handshake(ssl_srv);
                   error = SSL_get_error(ssl_srv, ret);
                   printf("server: SSL_do_handshake %d\n", error);
 		  fflush(stdout);
+                  if (error == SSL_ERROR_NONE) {
+                    printf("server: SSL_do_handshake DONE???\n");
+		    fflush(stdout);
+		    int ret = BIO_read(srv_w, buf, 4096);
+                    if (ret>0) {
+                      write(fdwrite, buf, ret);
+                      printf("server: SSL_do_handshake DONE %d %d\n", ret, SSL_get_error(ssl_srv, ret));
+		      fflush(stdout);
+                    }
+                  }
                 }
+		fflush(stdout);
+                if (error == SSL_ERROR_SSL) {
+                    printf("server SSL_ERROR_SSL error\n");
+		    fflush(stdout);
+                    break;
+                }
+                if (error == SSL_ERROR_WANT_READ) {
+                  printf("server SSL_ERROR_WANT_READ\n");
+		  fflush(stdout);
+		  n = BIO_read(srv_w, buf, 4096);
+                  if (n<0) {
+                    printf("server SSL_SSL_ERROR_WANT_READ error %d\n", SSL_get_error(ssl_srv, n));
+	            fflush(stdout);
+                    error = SSL_get_error(ssl_srv, n);
+                  } else {
+                    write(fdwrite, buf, n);
+                    printf("server SSL_ERROR_WANT_READ read %d\n", n);
+		    fflush(stdout);
+                    continue;
+                  }
+                }
+                if (error == SSL_ERROR_WANT_WRITE) {
+                  printf("server SSL_ERROR_WANT_WRITE\n");
+		  fflush(stdout);
+                  n = read(fdread, buf, 4096);
+                  if (n<=0) {
+                    printf("failed %d\n", errno);
+		    fflush(stdout);
+                    break;
+                  }
+		  int ret = BIO_write(srv_r, buf, n);
+                  if (ret>=0) {
+                    printf("server  SSL_ERROR_WANT_WRITE written %d\n", ret);
+	            fflush(stdout);
+                    continue;
+                  }
+                  error = SSL_get_error(ssl_srv, ret);
+                  printf("server  SSL_ERROR_WANT_WRITE %d return %d\n", n, ret);
+	          fflush(stdout);
+                }
+                printf("server: OOPS! %d\n", error);
                 fd_set fdset;
                 struct timeval tv;
                 FD_ZERO(&fdset);
@@ -154,44 +215,6 @@ int server(int fdread, int fdwrite)
                 } else {
                   printf("server select %d error???\n", err);
                 }
-		fflush(stdout);
-                if (error == SSL_ERROR_SSL) {
-                    printf("server SSL_ERROR_SSL error\n");
-		    fflush(stdout);
-                    break;
-                }
-                if (error ==  SSL_ERROR_WANT_READ) {
-                  printf("server SSL_ERROR_WANT_READ\n");
-		  fflush(stdout);
-		  n = BIO_read(srv_w, buf, 4096);
-                  if (n<0) {
-                    printf("server SSL_SSL_ERROR_WANT_READ error %d\n", SSL_get_error(ssl_srv, n));
-	            fflush(stdout);
-                    error = SSL_get_error(ssl_srv, n);
-                  } else {
-                    write(fdwrite, buf, n);
-                    printf("server SSL_ERROR_WANT_READ writen %d\n", n);
-		    fflush(stdout);
-                  }
-		  fflush(stdout);
-                  continue;
-                }
-                if (error == SSL_ERROR_WANT_WRITE) {
-                  printf("server SSL_ERROR_WANT_WRITE\n");
-		  fflush(stdout);
-                  n = read(fdread, buf, 4096);
-                  if (n<=0) {
-                    printf("failed %d\n", errno);
-		    fflush(stdout);
-                    break;
-                  }
-		  int ret = BIO_write(srv_r, buf, n);
-                  error = SSL_get_error(ssl_srv, ret);
-                  printf("server  SSL_ERROR_WANT_WRITE %d return %d\n", n, ret);
-	          fflush(stdout);
-                  continue;
-                }
-                printf("server: OOPS! %d\n", error);
                 fin_srv = SSL_is_init_finished(ssl_srv);
 		
 	}
