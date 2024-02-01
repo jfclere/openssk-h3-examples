@@ -7,6 +7,8 @@
 #include <sys/types.h>
 #include <errno.h>
 
+static char string[10] = "ABCDEFGH";
+
 void init_OpenSSL()
 {
 	if(!SSL_library_init())
@@ -15,6 +17,53 @@ void init_OpenSSL()
 		exit(1);
 	}
 	SSL_load_error_strings();
+}
+int sendreceive(SSL *ssl, BIO *ssl_r, BIO *ssl_w, int fdread, int fdwrite)
+{
+  char buf[4096];
+  int error = SSL_ERROR_NONE;
+  int n = 10;
+  int pid = getpid();
+  sleep(5);
+  while(error == SSL_ERROR_NONE)
+  {
+    fflush(stdout);
+    /* the sender */
+    int ret = SSL_write(ssl, string, 10);
+    printf("sendreceive: %d SSL_write %d\n", pid, ret);
+    ret = BIO_read(ssl_w, buf, 4096);
+    printf("sendreceive: BIO_read %d %d\n", error, ret);
+    if (error != SSL_ERROR_NONE)
+      break;
+    write(fdwrite, buf, ret);
+
+    /* the receiver */
+    n = read(fdread, buf, 4096);
+    if (n<=0) {
+      printf("sendreceive: read failed %d\n", errno);
+      break;
+    }
+    ret = BIO_write(ssl_r, buf, n);
+    error = SSL_get_error(ssl, ret);
+    printf("sendreceive: BIO_write %d %d\n", error, ret);
+    if (error != SSL_ERROR_NONE)
+      break;
+    ret = SSL_read(ssl, buf, sizeof(buf));
+    printf("sendreceive: %d SSL_read %d %d\n", pid, ret, SSL_get_error(ssl, ret));
+    if (SSL_get_error(ssl, ret) == SSL_ERROR_WANT_READ) {
+      printf("We need to retry...\n");
+    }
+    printf("sendreceive: received: %s send: %s SSL_read %d %d\n", buf, string, ret, SSL_get_error(ssl, ret));
+/*
+    ret = BIO_read(ssl_w, buf, 4096);
+    error = SSL_get_error(ssl, ret);
+    printf("sendreceive: BIO_read %d\n", error);
+    if (error != SSL_ERROR_NONE)
+      break;
+    write(fdwrite, buf, ret);
+ */
+  }
+  return 0;
 }
 
 int client(int fdread, int fdwrite)
@@ -57,6 +106,7 @@ int client(int fdread, int fdwrite)
                       write(fdwrite, buf, ret);
                       printf("client: SSL_do_handshake DONE %d %d\n", ret, SSL_get_error(ssl_client, ret));
 		      fflush(stdout);
+                      break; /* Done */
                     }
                   }
                 }
@@ -110,6 +160,9 @@ int client(int fdread, int fdwrite)
                 fin_client = SSL_is_init_finished(ssl_client);
         }
         printf("client done! %d\n", SSL_is_init_finished(ssl_client));
+
+        sendreceive(ssl_client, client_r, client_w, fdread, fdwrite); 
+	return 0;
 }
 int server(int fdread, int fdwrite)
 {
@@ -152,6 +205,7 @@ int server(int fdread, int fdwrite)
                       write(fdwrite, buf, ret);
                       printf("server: SSL_do_handshake DONE %d %d\n", ret, SSL_get_error(ssl_srv, ret));
 		      fflush(stdout);
+                      break; /* Done */
                     }
                   }
                 }
@@ -220,6 +274,7 @@ int server(int fdread, int fdwrite)
 	}
         printf("server done! %d\n", SSL_is_init_finished(ssl_srv));
 
+        sendreceive(ssl_srv, srv_r, srv_w, fdread, fdwrite); 
 	return 0;
 }
 int main()
@@ -244,6 +299,7 @@ int main()
        if (childpid == 0) {
          close(fd[1]);
          close(df[0]);
+         strcpy(string, "abcdefgh");
          client(fd[0], df[1]);
        } else {
          close(fd[0]);
