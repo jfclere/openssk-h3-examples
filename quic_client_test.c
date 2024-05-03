@@ -371,7 +371,7 @@ static int test_quic_client(char *hostname, short port)
     SSL_CTX_set_verify(c_ctx, SSL_VERIFY_PEER, NULL);
 
     /* Load default root CA store. */
-    if (!SSL_CTX_load_verify_locations(c_ctx, NULL, "/etc/ssl/certs")) {
+    if (!SSL_CTX_load_verify_locations(c_ctx, "/etc/pki/CA/cacert.pem" , "/etc/ssl/certs")) {
         goto err;
     }
 /* problems ...
