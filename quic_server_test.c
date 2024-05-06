@@ -134,15 +134,15 @@ static int cb_h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *setti
     return 0;
 }
 static cb_h3_begin_trailers() {
-    printf("cb_h3_recv_settings!\n");
+    printf("cb_h3_begin_trailers!\n");
     return 0;
 }
 static cb_h3_end_trailers() {
-    printf("cb_h3_recv_settings!\n");
+    printf("cb_h3_end_trailers!\n");
     return 0;
 }
 static cb_h3_end_stream() {
-    printf("cb_h3_recv_settings!\n");
+    printf("cb_h3_end_stream!\n");
     return 0;
 }
 
@@ -488,11 +488,12 @@ int main(int argc, char *argv[])
             ret = EXIT_FAILURE;
             goto end;
         }
-        printf("control: NONE enc %d dec %d\n", p_streamid, r_streamid);
         if (nghttp3_conn_bind_qpack_streams(conn, p_streamid, r_streamid)) {
                 printf("nghttp3_conn_bind_qpack_streams failed!\n");
                 exit(1);
-            }
+        }
+        printf("control: NONE enc %d dec %d\n", p_streamid, r_streamid);
+
         /* we need to send that to the client or not ... */
         /* nghttp3_conn_create_stream(conn, &streamid, 0); Weird??? */
 
@@ -536,7 +537,7 @@ int main(int argc, char *argv[])
             } else {
                 printf("nghttp3_conn_writev_stream: %d\n", sveccnt);
             }
-            for (int i=0; i<=sveccnt; i++) {
+            for (int i=0; i<sveccnt; i++) {
                 printf("ossl_quic_tserver_write on %d for %d\n", streamid, vec[i].len);
                 if (!ossl_quic_tserver_write(qtserv, streamid, vec[i].base , vec[i].len, &numbytes)) {
                     printf("ossl_quic_tserver_write failed!\n");
