@@ -561,36 +561,14 @@ int main(int argc, char *argv[])
             goto end;
         }
         printf("nghttp3_conn_submit_response WAITED...\n");
-        uint64_t o_streamid = streamid;
 
-/*
-        } while (reqbytes < sizeof(reqterm)
-                || memcmp(reqbuf + reqbytes - sizeof(reqterm), reqterm,
-                        sizeof(reqterm)) != 0);
- */
-
-        if ((streamid & QUIC_STREAM_DIR_UNI) != 0) {
-            /*
-            * Incoming stream was uni-directional. Create a server initiated
-            * uni-directional stream for the response.
-            */
-            if (!ossl_quic_tserver_stream_new(qtserv, 1, &o_streamid)) {
-                BIO_printf(bio_err, "Failed creating response stream\n");
-                goto end;
-            }
+        if (!ossl_quic_tserver_conclude(qtserv, streamid)) {
+            printf("ossl_quic_tserver_conclude failed!\n");
+            ret = EXIT_FAILURE;
+            goto end;
         }
+        printf("Done!\n");
 
-        /* Send the response */
-        printf("OUT: %d \n", o_streamid);
-
-        ossl_quic_tserver_tick(qtserv);
-        if (!ossl_quic_tserver_write(qtserv, o_streamid,
-                                    (unsigned char *)response[respnum],
-                                    strlen(response[respnum]), &numbytes))
-            goto end;
-
-        if (!ossl_quic_tserver_conclude(qtserv, o_streamid))
-            goto end;
     }
 
  end:
