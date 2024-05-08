@@ -210,7 +210,35 @@ static void wait_for_activity(QUIC_TSERVER *qtserv)
     if (readfdsp == NULL && writefdsp == NULL && timeoutp == NULL)
         return;
 
-    select(width, readfdsp, writefdsp, NULL, timeoutp);
+    int ret = select(width, readfdsp, writefdsp, NULL, timeoutp);
+    if (ret <= 0)
+        return;
+    if (FD_ISSET(sock, readfdsp)) {
+        printf("wait_for_activity: read something on %d\n", sock);
+        char message[1];
+        socklen_t size;
+	struct sockaddr addr;
+        size = sizeof(addr);
+        ret = recvfrom (sock, message, 0, MSG_PEEK, &addr, &size);
+        printf("wait_for_activity: read something on %d: %d\n", sock, ret);
+        if (ret >= 0) {
+            if (addr.sa_family == AF_INET) {
+                struct sockaddr_in *addr_in = (struct sockaddr_in *)&addr;
+                char ipAddress[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &(addr_in->sin_addr), ipAddress, INET_ADDRSTRLEN);
+                printf("wait_for_activity: read something on %d: %d from %s:%d\n", sock, ret, ipAddress, ntohs(addr_in->sin_port));
+            }
+            else if (addr.sa_family == AF_INET6) {
+                struct sockaddr_in6 *addr_in = (struct sockaddr_in6 *)&addr;
+                char ipAddress[INET6_ADDRSTRLEN];
+                inet_ntop(AF_INET6, &(addr_in->sin6_addr), ipAddress, INET6_ADDRSTRLEN);
+                printf("wait_for_activity: read something on %d: %d from %s:%d\n", sock, ret, ipAddress, ntohs(addr_in->sin6_port));
+            }
+            else
+                printf("wait_for_activity: read something on %d: UNKNOWN\n", sock);
+        }
+    }
+     
 }
 
 /* Helper function to create a BIO connected to the server */
@@ -507,28 +535,13 @@ int main(int argc, char *argv[])
 {
     QUIC_TSERVER_ARGS tserver_args = {0};
     QUIC_TSERVER *qtserv = NULL;
-    QUIC_TSERVER_ARGS tserver_args1 = {0};
     QUIC_TSERVER *qtserv1 = NULL;
     int ipv6 = 0, trace = 0;
     int argnext = 1;
     BIO *bio = NULL;
     char *hostname, *port, *certfile, *keyfile;
     int ret = EXIT_FAILURE;
-    unsigned char reqbuf[1024];
-    size_t numbytes, reqbytes = 0;
-    const char reqterm[] = {
-        '\r', '\n', '\r', '\n'
-    };
-    const char *response[] = {
-        "HTTP/1.0 200 ok\r\nContent-type: text/html\r\n\r\n<!DOCTYPE html>\n<html>\n<body>Hello world</body>\n</html>\n",
-        "HTTP/1.0 200 ok\r\nContent-type: text/html\r\n\r\n<!DOCTYPE html>\n<html>\n<body>Hello again</body>\n</html>\n",
-        "HTTP/1.0 200 ok\r\nContent-type: text/html\r\n\r\n<!DOCTYPE html>\n<html>\n<body>Another response</body>\n</html>\n",
-        "HTTP/1.0 200 ok\r\nContent-type: text/html\r\n\r\n<!DOCTYPE html>\n<html>\n<body>A message</body>\n</html>\n",
-    };
     unsigned char alpn[] = { 5, 'h', '3', '-', '2', '9', 2, 'h', '3' };
-    int first = 1;
-    uint64_t streamid;
-    size_t respnum = 0;
     void *thread_status[2];
     pthread_t thread[2];
 
@@ -572,13 +585,6 @@ int main(int argc, char *argv[])
     tserver_args.alpn = alpn;
     tserver_args.alpnlen = sizeof(alpn);
     tserver_args.ctx = NULL;
-
-    tserver_args1.libctx = NULL;
-    tserver_args1.net_rbio = bio;
-    tserver_args1.net_wbio = bio;
-    tserver_args1.alpn = alpn;
-    tserver_args1.alpnlen = sizeof(alpn);
-    tserver_args1.ctx = NULL;
 
     qtserv = ossl_quic_tserver_new(&tserver_args, certfile, keyfile);
     if (qtserv == NULL) {
