@@ -142,15 +142,15 @@ static int cb_h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *setti
     printf("cb_h3_recv_settings!\n");
     return 0;
 }
-static cb_h3_begin_trailers() {
+static int cb_h3_begin_trailers() {
     printf("cb_h3_begin_trailers!\n");
     return 0;
 }
-static cb_h3_end_trailers() {
+static int cb_h3_end_trailers() {
     printf("cb_h3_end_trailers!\n");
     return 0;
 }
-static cb_h3_end_stream() {
+static int cb_h3_end_stream() {
     printf("cb_h3_end_stream!\n");
     return 0;
 }
